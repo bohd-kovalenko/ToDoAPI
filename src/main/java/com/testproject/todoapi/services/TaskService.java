@@ -5,13 +5,14 @@ import com.testproject.todoapi.dtos.TaskDTO;
 import java.util.List;
 
 public interface TaskService {
-    TaskDTO getTaskById(String id);
 
-    void deleteTaskById(String id);
+    void createNewTaskWithJWT(TaskDTO taskDTO, String jwt);
 
-    void updateTask(TaskDTO taskDTO, String taskId);
+    List<TaskDTO> getAllTasksForUserByJWT(String filterType, String sortType, String token);
 
-    void createNewTask(TaskDTO taskDTO);
+    void deleteTaskByIdWithJWT(String taskId, String jwt);
 
-    List<TaskDTO> getAllTasks(String filterType, String sortType);
+    void updateTaskWithJWT(TaskDTO taskDTO, String taskId, String jwt);
+
+    TaskDTO getTaskByIdWithJWT(String taskId, String jwt);
 }

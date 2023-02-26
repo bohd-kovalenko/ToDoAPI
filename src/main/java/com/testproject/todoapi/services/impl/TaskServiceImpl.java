@@ -3,15 +3,16 @@ package com.testproject.todoapi.services.impl;
 import com.testproject.todoapi.dtos.TaskDTO;
 import com.testproject.todoapi.enums.FilterType;
 import com.testproject.todoapi.enums.SortType;
-import com.testproject.todoapi.exceptions.WrongFilterTypeException;
-import com.testproject.todoapi.exceptions.WrongIdException;
-import com.testproject.todoapi.exceptions.WrongSortTypeException;
-import com.testproject.todoapi.exceptions.WrongTaskFieldsException;
+import com.testproject.todoapi.exceptions.*;
 import com.testproject.todoapi.mappers.TaskMapper;
 import com.testproject.todoapi.models.Task;
+import com.testproject.todoapi.models.User;
 import com.testproject.todoapi.repositories.TaskRepository;
+import com.testproject.todoapi.services.JwtService;
 import com.testproject.todoapi.services.TaskService;
+import com.testproject.todoapi.services.UserService;
 import lombok.RequiredArgsConstructor;
+import lombok.SneakyThrows;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 
@@ -22,13 +23,16 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class TaskServiceImpl implements TaskService {
     private final TaskRepository taskRepository;
+    private final UserService userService;
+    private final JwtService jwtService;
 
     @Override
-    public List<TaskDTO> getAllTasks(String filterType, String sortType) {
+    public List<TaskDTO> getAllTasksForUserByJWT(String filterType, String sortType, String token) {
         List<Task> tasks = null;
         Sort sort = null;
         SortType enumSortType;
         FilterType enumFilterType;
+        User user = userService.getUserByUsername(jwtService.extractUsernameFromJWT(token));
         try {
             enumSortType = SortType.valueOf(sortType);
         } catch (IllegalArgumentException e) {
@@ -48,22 +52,21 @@ public class TaskServiceImpl implements TaskService {
             case ALPHABETICAL -> sort = Sort.by("name").ascending();
         }
         switch (enumFilterType) {
-            case ALL -> tasks = taskRepository.findAllSorted(sort);
-            case TO_DO -> tasks = taskRepository.findAllSortedAndFiltered(false, sort);
-            case DONE -> tasks = taskRepository.findAllSortedAndFiltered(true, sort);
+            case ALL -> tasks = taskRepository.findAllSortedByUserId(sort, String.valueOf(user.getId()));
+            case TO_DO ->
+                    tasks = taskRepository.findAllSortedAndFilteredByUserId(false, sort, String.valueOf(user.getId()));
+            case DONE ->
+                    tasks = taskRepository.findAllSortedAndFilteredByUserId(true, sort, String.valueOf(user.getId()));
         }
         return tasks.stream().map(TaskMapper.INSTANCE::taskToTaskDTO).collect(Collectors.toList());
     }
 
-    @Override
-    public TaskDTO getTaskById(String id) {
-        Task task = taskRepository.findById(Long.parseLong(id)).orElseThrow(() -> new WrongIdException("No task with such id in db"));
-        return TaskMapper.INSTANCE.taskToTaskDTO(task);
-    }
 
     @Override
-    public void createNewTask(TaskDTO taskDTO) {
+    public void createNewTaskWithJWT(TaskDTO taskDTO, String jwt) {
+        User user = userService.getUserByUsername(jwtService.extractUsernameFromJWT(jwt));
         Task task = TaskMapper.INSTANCE.taskDTOToTask(taskDTO);
+        task.setUser(user);
         try {
             taskRepository.save(task);
         } catch (Exception e) {
@@ -72,7 +75,39 @@ public class TaskServiceImpl implements TaskService {
     }
 
     @Override
-    public void updateTask(TaskDTO taskDTO, String taskId) {
+    public void deleteTaskByIdWithJWT(String taskId, String jwt) {
+        checkIfTaskBelongsToJWT(taskId, jwt);
+        deleteTaskById(taskId);
+    }
+
+    @Override
+    public void updateTaskWithJWT(TaskDTO taskDTO, String taskId, String jwt) {
+        checkIfTaskBelongsToJWT(taskId, jwt);
+        updateTask(taskDTO, taskId);
+    }
+
+    @Override
+    public TaskDTO getTaskByIdWithJWT(String taskId, String jwt) {
+        checkIfTaskBelongsToJWT(taskId, jwt);
+        return getTaskById(taskId);
+    }
+
+    private void checkIfTaskBelongsToJWT(String taskId, String jwt) {
+        Task task = taskRepository.findById(Long.parseLong(taskId))
+                .orElseThrow(() -> new WrongIdException("Task with this id does not exist"));
+        User user = userService.getUserByUsername(jwtService.extractUsernameFromJWT(jwt));
+        if (task.getUser().getId() != user.getId()) {
+            throw new WrongJWTToken("Task owner not match one, granted in JWT");
+        }
+    }
+
+    private TaskDTO getTaskById(String taskId) {
+        Task task = taskRepository.findById(Long.parseLong(taskId))
+                .orElseThrow(() -> new WrongIdException("No task with such id in db"));
+        return TaskMapper.INSTANCE.taskToTaskDTO(task);
+    }
+
+    private void updateTask(TaskDTO taskDTO, String taskId) {
         Task task = taskRepository.findById(Long.parseLong(taskId)).orElseThrow(() -> new WrongIdException("No task with such id in db"));
         task.setName(taskDTO.getName());
         task.setDone(taskDTO.isDone());
@@ -83,8 +118,7 @@ public class TaskServiceImpl implements TaskService {
         }
     }
 
-    @Override
-    public void deleteTaskById(String id) {
+    private void deleteTaskById(String id) {
         try {
             taskRepository.deleteById(Long.parseLong(id));
         } catch (Exception e) {
